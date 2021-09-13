@@ -1,6 +1,7 @@
 <template>
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
-    <!-- <div
+    <div
+      v-if="isProcessing"
       class="
         fixed
         w-100
@@ -34,7 +35,7 @@
           d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
         ></path>
       </svg>
-    </div> -->
+    </div>
     <div class="container">
       <section>
         <div class="flex">
@@ -45,7 +46,7 @@
             <div class="mt-1 relative rounded-md shadow-md">
               <input
                 v-model="ticker"
-                @keydown.enter="handleAddTicker"
+                @keydown.enter="() => handleAddTicker()"
                 type="text"
                 name="wallet"
                 id="wallet"
@@ -62,10 +63,15 @@
                 placeholder="Например DOGE"
               />
             </div>
-            <!-- <div
+
+            <div
+              v-if="coinHelpers.length"
               class="flex bg-white shadow-md p-1 rounded-md shadow-md flex-wrap"
             >
               <span
+                v-for="coin in coinHelpers"
+                :key="coin"
+                @click="handleAddTickerFromHelpers(coin)"
                 class="
                   inline-flex
                   items-center
@@ -79,62 +85,16 @@
                   cursor-pointer
                 "
               >
-                BTC
-              </span>
-              <span
-                class="
-                  inline-flex
-                  items-center
-                  px-2
-                  m-1
-                  rounded-md
-                  text-xs
-                  font-medium
-                  bg-gray-300
-                  text-gray-800
-                  cursor-pointer
-                "
-              >
-                DOGE
-              </span>
-              <span
-                class="
-                  inline-flex
-                  items-center
-                  px-2
-                  m-1
-                  rounded-md
-                  text-xs
-                  font-medium
-                  bg-gray-300
-                  text-gray-800
-                  cursor-pointer
-                "
-              >
-                BCH
-              </span>
-              <span
-                class="
-                  inline-flex
-                  items-center
-                  px-2
-                  m-1
-                  rounded-md
-                  text-xs
-                  font-medium
-                  bg-gray-300
-                  text-gray-800
-                  cursor-pointer
-                "
-              >
-                CHD
+                {{ coin }}
               </span>
             </div>
-            <div class="text-sm text-red-600">Такой тикер уже добавлен</div> -->
+            <div v-if="tickerAlert" class="text-sm text-red-600">
+              Такой тикер уже добавлен
+            </div>
           </div>
         </div>
         <button
-          @click="handleAddTicker"
+          @click="() => handleAddTicker()"
           type="button"
           class="
             my-4
@@ -175,11 +135,108 @@
           Добавить
         </button>
       </section>
+
+      <section>
+        <hr class="w-full border-t border-gray-600 my-4" />
+        <!-- Фильтрация | Пагинация -->
+        <div class="flex justify-between content-center">
+          <div>
+            <label
+              for="searchFilter"
+              class="block text-sm font-medium text-gray-700"
+              >Фильтр по наименованию</label
+            >
+            <div class="mt-1 relative rounded-md shadow-md">
+              <input
+                v-model="searchFilter"
+                type="text"
+                name="searchFilter"
+                id="searchFilter"
+                class="
+                  block
+                  w-full
+                  pr-10
+                  border-gray-300
+                  text-gray-900
+                  focus:outline-none focus:ring-gray-500 focus:border-gray-500
+                  sm:text-sm
+                  rounded-md
+                "
+                placeholder="Введите валюту"
+              />
+            </div>
+          </div>
+          <div>
+            <button
+              type="button"
+              v-if="hasPrevPage"
+              @click="pagination.page -= 1"
+              class="
+                mx-2
+                my-4
+                inline-flex
+                items-center
+                py-2
+                px-4
+                border border-transparent
+                shadow-sm
+                text-sm
+                leading-4
+                font-medium
+                rounded-full
+                text-white
+                bg-gray-600
+                hover:bg-gray-700
+                transition-colors
+                duration-300
+                focus:outline-none
+                focus:ring-2
+                focus:ring-offset-2
+                focus:ring-gray-500
+              "
+            >
+              Назад
+            </button>
+            <button
+              v-if="hasNextPage"
+              type="button"
+              @click="pagination.page += 1"
+              class="
+                mx-2
+                my-4
+                inline-flex
+                items-center
+                py-2
+                px-4
+                border border-transparent
+                shadow-sm
+                text-sm
+                leading-4
+                font-medium
+                rounded-full
+                text-white
+                bg-gray-600
+                hover:bg-gray-700
+                transition-colors
+                duration-300
+                focus:outline-none
+                focus:ring-2
+                focus:ring-offset-2
+                focus:ring-gray-500
+              "
+            >
+              Вперёд
+            </button>
+          </div>
+        </div>
+      </section>
+
       <template v-if="tickers.length">
         <hr class="w-full border-t border-gray-600 my-4" />
+
         <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
           <div
-            v-for="t in tickers"
+            v-for="t in paginateTickers"
             :key="t.name"
             @click="choiceCurrentTicker(t)"
             :class="{
@@ -284,20 +341,83 @@
 </template>
 
 <script>
+// 1. Пагинация и фльтрация через роутер | Критичность [2]
+// 2. Магические числа (URL, API Key, 5000) | Критичность [3]
+// 3. При удалении тикера ошибка с пагинацией (если это была last страница на которой располагался тикер) | Критичность [2]
+// 4. Много запросов, хотя все данные можно получить через один запрос | Критичность [4]
+// 5. Запросы напрямую внутри компонента | Критичность [4]
+// 6. Наличие в состоянии зависимых данных | Критичность [5]
+// 7. По три запроса на один тикер, при удалени тикера остаётся подписка на событие | Критичность [5]
+// 8. Обработка ошибок API | Критичность [5]
+// 9. Не исправность графика + выглядит неприемлемо когда становится большим | Критичность [5]
+// 10. При удалении тикера остаётся подписка на событие  | Критичность [5]
+
+// Параллельно
+//
+//
 export default {
   name: "App",
   data() {
     return {
+      localStorage: window.localStorage,
       ticker: "",
       tickers: [],
       graph: [],
       curTicker: null,
-      intervalId: null,
+      coinList: [],
+      coinHelpers: [],
+      tickerAlert: false,
+      isProcessing: false,
+      searchFilter: "",
+      pagination: {
+        page: 1,
+        pageSize: 6,
+      },
+      tickersLength: 0,
+      api: {
+        url: "https://min-api.cryptocompare.com/data/price",
+        apiKey:
+          "1109a3d1352ffaa0fe00d179a736905584b7c8db5374d6719c7321f635e10a2b",
+      },
     };
+  },
+  async mounted() {
+    this.isProcessing = true;
+    await this.fetchCoinlist();
+    this.isProcessing = false;
+    let storageTickers = this.localStorage.getItem("tickers");
+    if (storageTickers) {
+      this.tickers = JSON.parse(storageTickers);
+      this.tickers.forEach((ticker) => this.subscribeToUpdate(ticker.name));
+    }
+  },
+  computed: {
+    paginateTickers() {
+      const finish = this.pagination.page * this.pagination.pageSize - 1;
+      const start = finish - this.pagination.pageSize + 1;
+      return this.filteredTickers.slice(start, finish + 1);
+    },
+
+    filteredTickers() {
+      return this.tickers.filter((t) =>
+        t.name.includes(this.searchFilter.toUpperCase())
+      );
+    },
+
+    hasPrevPage() {
+      return this.pagination.page > 1;
+    },
+
+    hasNextPage() {
+      return (
+        this.pagination.page <
+        Math.ceil(this.filteredTickers.length / this.pagination.pageSize)
+      );
+    },
   },
   methods: {
     async fetchData(currency) {
-      const url = `https://min-api.cryptocompare.com/data/price?fsym=${currency}&tsyms=USD`;
+      const url = `${this.api.url}?fsym=${currency}&tsyms=USD&api_key=${this.api.apiKey}`;
       const response = await fetch(url);
       return await response.json();
     },
@@ -310,27 +430,49 @@ export default {
       });
     },
 
-    handleAddTicker() {
-      const newTicker = { name: this.ticker, price: "-" };
-      this.tickers.unshift(newTicker);
-      this.intervalId = setInterval(async () => {
-        const response = await this.fetchData(newTicker.name);
-        // newTicker.price = response.USD; ? узнать почему не работает
-        this.tickers.find((t) => t.name === newTicker.name).price =
-          response.USD;
-        if (this.curTicker?.name === newTicker.name) {
+    async fetchCoinlist() {
+      let response = await fetch(
+        "https://min-api.cryptocompare.com/data/all/coinlist?summary=true"
+      );
+      response = await response.json();
+      this.coinList = Object.keys(response.Data);
+    },
+    handleAddTickerFromHelpers(coin) {
+      this.handleAddTicker(coin);
+    },
+    isTickerAlreadyExist(name) {
+      return this.tickers.findIndex((t) => t.name === name) >= 0 ? true : false;
+    },
+    handleAddTicker(tickerName = false) {
+      const name = tickerName
+        ? tickerName.toUpperCase()
+        : this.ticker.toUpperCase();
+
+      this.isTickerAlreadyExist(name)
+        ? (this.tickerAlert = true)
+        : (this.tickers = [
+            { name: name, price: "-", intervalId: null },
+            ...this.tickers,
+          ]);
+
+      this.ticker = "";
+    },
+    subscribeToUpdate(tickerName) {
+      let intervalId = setInterval(async () => {
+        const response = await this.fetchData(tickerName);
+        let findTicker = this.tickers.find((t) => t.name === tickerName);
+        findTicker.price = response.USD;
+        findTicker.intervalId = intervalId;
+        if (this.curTicker?.name === tickerName) {
           this.graph.push(response.USD);
-          // this.recountGraphToPercent();
         }
       }, 5000);
-      this.clearTickerField();
     },
     handleDeleteTicker(deletedTicker) {
       this.tickers = this.tickers.filter((t) => t !== deletedTicker);
+      clearInterval(deletedTicker.intervalId);
+      this.localStorage.setItem("tickers", JSON.stringify(this.tickers));
       this.clearActiveTickerAndGraph();
-    },
-    clearTickerField() {
-      this.ticker = "";
     },
     clearActiveTickerAndGraph() {
       this.curTicker = null;
@@ -341,7 +483,24 @@ export default {
       this.curTicker = currentTicker;
     },
   },
+  watch: {
+    ticker(value) {
+      this.tickerAlert = false;
+      if (value === "") {
+        this.coinHelpers = [];
+        return;
+      }
+      this.coinHelpers = this.coinList
+        .filter((val) => val.indexOf(value.toUpperCase()) !== -1)
+        .splice(0, 4);
+    },
+    tickers() {
+      // this.subscribeToUpdate(this.ticker); // TODO watch
+      this.localStorage.setItem("tickers", JSON.stringify(this.tickers));
+    },
+    searchFilter() {
+      this.pagination.page = 1;
+    },
+  },
 };
 </script>
-
-<style src="./app.css"></style>
